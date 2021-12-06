@@ -144,4 +144,4 @@ class DDR_Data_object(object,metaclass=Singleton):
         self.path_2_genes_dict['chromatin_remodel'] = chromatin_remod_genes
 
 #this gets imported and used throughout the other classes
-myddr_obj=DDR_Data_object()
+myddr_obj=DDR_Data_object(load_chromatin=True)

@@ -3,24 +3,29 @@ import numpy as np
 import pandas as pd
 import gzip,pickle
 import scipy.stats as stats
-from .name_matching_scripts import match_names_to_symbols
 import mygene
+import sklearn.preprocessing as skp
+from .name_matching_scripts import match_names_to_symbols
 from .file_locations import tcga_dir
 from .ddr_data_object import myddr_obj
+from .load_clinical_datasets import ClinicalDataSet,load_GSEA_gene_signatures
+from .bipartite_helper_functions import get_gene_signature
 import logging
 logger=logging.getLogger(__name__)
 
-class TCGA_Data():
+class TCGA_Data(ClinicalDataSet):
 
     def __init__(self,genelist=None,cut=5000):
         super(TCGA_Data,self).__init__()
-
         self.data_dir = tcga_dir
         self.cut=cut #maximun TMB before sample is excluded
         self.genelist=genelist #typically this would be the list of PMEC genes to restrict analysis to. 
         self.load_tcga()
         self.filter_tcga()
         self.load_tcga_deletions()
+
+    def get_tcga_bar(self,x):
+        return "-".join(x.split("-")[:3])
 
     def load_tcga(self):
         logger.info("Loading TCGA dataset")
@@ -82,13 +87,10 @@ class TCGA_Data():
 
 
 
-        def barcode2id(barcode):
-            splt = re.split("-", barcode)[:3]
-            return "-".join(splt)
 
         short2longer = dict(
-            zip(map(lambda x: barcode2id(x), self.tcga_snv_indel_df.index.values), self.tcga_snv_indel_df.index.values))
-        tcga_mut_loads.index = map(lambda x: short2longer.get(barcode2id(x), 'None'),
+            zip(map(lambda x: self.get_tcga_bar(x), self.tcga_snv_indel_df.index.values), self.tcga_snv_indel_df.index.values))
+        tcga_mut_loads.index = map(lambda x: short2longer.get(self.get_tcga_bar(x), 'None'),
                                    tcga_mut_loads['Tumor_Sample_ID'].values)
         tcga_mut_loads = tcga_mut_loads.iloc[np.where(~tcga_mut_loads.index.isin(['None']))[0], :]
         self.tcga_snv_indel_df.loc[tcga_mut_loads.index, 'tmb'] = tcga_mut_loads['tmb']
@@ -227,3 +229,92 @@ class TCGA_Data():
         self.del_samp_by_gene_tcga = self.cn_samp_by_gene_tcga.copy()
         self.del_samp_by_gene_tcga[self.del_samp_by_gene_tcga >= -1] = 0
         self.del_samp_by_gene_tcga[self.del_samp_by_gene_tcga < -1] = 1
+
+    def load_clinical_data(self):
+        logger.info("Loading TCGA Clinical data")
+
+        self.tcga_survive_file = os.path.join(self.data_dir, 'TCGA-CDR-SupplementalTableS1.xlsx')
+        clinical_data_raw = pd.read_excel(self.tcga_survive_file, sheet_name='TCGA-CDR', index_col=0)
+        clinical_data_raw.index = clinical_data_raw['bcr_patient_barcode']
+        #There isn't a one-to-one mapping here so we have to combine some of the tumors.
+        short_ids = list(map(lambda x: "-".join(x.split("-")[:3]), self.tcga_spec_by_all_genes.index))
+        conver_dict = dict(zip(self.tcga_spec_by_all_genes.index, short_ids))
+        rev_conv_dict = {}
+        for k, val in conver_dict.items():
+            rev_conv_dict[val] = rev_conv_dict.get(val, []) + [k]
+
+        self.clinical_data = pd.DataFrame()
+        for k, vals in rev_conv_dict.items():
+            for val in vals:
+                if k in clinical_data_raw.index:
+                    self.clinical_data.loc[val, 'type'] = clinical_data_raw.loc[k, 'type']
+                    self.clinical_data.loc[val, 'race'] = clinical_data_raw.loc[k, 'race']
+                    self.clinical_data.loc[val, 'os'] = clinical_data_raw.loc[k, 'OS.time'] / 30
+                    self.clinical_data.loc[val, 'censOS'] = clinical_data_raw.loc[k, 'OS']
+                    self.clinical_data.loc[val, 'os_d'] = clinical_data_raw.loc[k, 'DSS.time'] / 30
+                    self.clinical_data.loc[val, 'censOS_d'] = clinical_data_raw.loc[k, 'DSS']
+
+                    if clinical_data_raw.loc[k, 'OS.time'] < 5 * 365:
+                        self.clinical_data.loc[val, 'os_5yr'] = min(clinical_data_raw.loc[k, 'OS.time'], 5 * 365) / 30.
+                        self.clinical_data.loc[val, 'censOS_5yr'] = clinical_data_raw.loc[k, 'OS']
+                    else:
+                        self.clinical_data.loc[val, 'os_5yr'] = (5 * 365) / 30
+                        self.clinical_data.loc[val, 'censOS_5yr'] = 0
+
+                else:
+                    self.clinical_data.loc[val, 'censOS'] = np.NaN
+                    self.clinical_data.loc[val, 'os'] = np.NaN
+                    self.clinical_data.loc[val, 'censOS_d'] = np.NaN
+                    self.clinical_data.loc[val, 'os_d'] = np.NaN
+
+        self.clinical_data['TMB'] = self.tcga_snv_indel_df.loc[self.clinical_data.index, 'tmb']
+        self.clinical_data['high_TMB'] = self.clinical_data['TMB'].apply(lambda x: "TMB-H" if x > 15 else "TMB-L")
+
+        #for marking clincial data wth inherited method
+        self.spec_by_genes=self.tcga_spec_by_all_genes
+        self.add_all_big_bets_categories(ClinicalDataSet.bigbet_scores_df)
+
+    def load_rnaseq_data(self):
+        logger.info("Loading TCGA RNAseq data")
+        tcga_rna_file = os.path.join(self.data_dir, "EBPlusPlusAdjustPANCAN_IlluminaHiSeq_RNASeqV2.geneExp.tsv")
+        self.rnaseq_df = pd.read_table(tcga_rna_file)
+
+        gene_entrez = self.rnaseq_df['gene_id'].apply(lambda x: x.split("|")[1])
+        entrez2symbolsfile=os.path.join(self.data_dir,'tcga_rnaseq_entrez_to_symbols_table.csv')
+        if os.path.exists(entrez2symbolsfile):
+            convtable=pd.read_csv(entrez2symbolsfile,index_col=0)
+        else:
+            mg = mygene.MyGeneInfo()
+            res = mg.querymany(gene_entrez, scopes='entrezgene', fields='symbol', returnall=True, as_dataframe=True)
+            convtable=res['out']
+            convtable.to_csv(entrez2symbolsfile)
+
+        symbols = np.array(list(map(lambda x: convtable['symbol'].get(x, 'Not_found'), gene_entrez)))
+        self.rnaseq_df['gene_id'] = symbols
+
+        self.rnaseq_df = self.rnaseq_df.set_index('gene_id')
+        self.rnaseq_df = self.rnaseq_df.loc[self.rnaseq_df.index.isin(self.tcga_spec_by_all_genes.columns), :]
+
+
+        short_ids = list(map(self.get_tcga_bar, self.tcga_spec_by_all_genes.index))
+        id2longer = dict(zip(short_ids, self.tcga_spec_by_all_genes.index))
+        self.rnaseq_df.columns = list(map(self.get_tcga_bar, self.rnaseq_df.columns))
+        self.rnaseq_df = self.rnaseq_df.loc[:, self.rnaseq_df.columns.isin(id2longer)]
+        self.rnaseq_df.columns = list(map(lambda x: id2longer[x], self.rnaseq_df.columns))
+
+        #log2(1+p) and do robust scaling across the different samples.
+        self.log_all_rna_exp = np.log2(self.rnaseq_df + 1)
+        scaler = skp.RobustScaler().fit(self.log_all_rna_exp)
+        self.log_all_rna_exp_scaled = pd.DataFrame(scaler.transform(self.log_all_rna_exp), index=self.log_all_rna_exp.index,
+                                              columns=self.log_all_rna_exp.columns)
+        self.log_all_rna_exp_scaled = self.log_all_rna_exp_scaled.T
+
+        #construct GSEA signatures as well.
+        self.get_GSEA_signatures()
+
+    def get_GSEA_signatures(self):
+        gene_sigs=load_GSEA_gene_signatures()
+        self.ig_signatures = pd.DataFrame(index=self.log_all_rna_exp_scaled.index)
+        for sig, genes in gene_sigs.items():
+            cgenes = np.array(genes)[np.where(np.isin(genes, self.log_all_rna_exp_scaled.columns))[0]]
+            self.ig_signatures.loc[:, sig] = get_gene_signature(self.log_all_rna_exp_scaled, cgenes)

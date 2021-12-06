@@ -1,5 +1,6 @@
 import os,sys,re
 import gzip,pickle
+import scipy.stats as stats
 import numpy as np
 import pandas as pd
 import logging
@@ -64,10 +65,9 @@ class ClinicalDataSet():
         high_ddr_genes = ddr_bigbets_filt_df.index[np.where(ddr_bigbets_filt_df['zscore_tcga'] > np.abs(cut))]
         ddr_high_gene_mutated=self.add_big_bets_category(high_ddr_genes,'DDR_high_z')
 
+        #take into account intersection.
         low_ddr_genes = ddr_bigbets_filt_df.index[np.where(ddr_bigbets_filt_df['zscore_tcga'] < cut)]
         ddr_low_gene_mutated=self.add_big_bets_category(low_ddr_genes,'DDR_low_z')
-
-        self.clinical_bigbets_df.loc[list(set(ddr_low_gene_mutated).intersection(ddr_high_gene_mutated)), 'DDR_low_z'] = 'WT'
 
 
         if "mwu_tcga" in ddr_bigbets_filt_df.columns:
@@ -539,6 +539,7 @@ class Rose2021(ClinicalDataSet):
                              np.where(~self.clinical_data['RECIST'].isin([np.nan, 'NE', "X"]))[0], :]
 
         self.clinical_data['cohort'] = 'Rose2021'
+        self.spec_by_genes=self.spec_by_genes.loc[self.spec_by_genes.index.intersection(self.clinical_data.index),:]
 class WeirMetaDataSet(ClinicalDataSet):
     """
     Combine Cbioportal and Rose et al for this dataset
@@ -618,15 +619,80 @@ class Miao2018Dataset(ClinicalDataSet):
 
     def __init__(self):
         super(Miao2018Dataset, self).__init__()
-        self.data_dir=braun_dir
-        self.datafile = os.path.join(self.data_dir, '41591_2020_839_MOESM2_ESM.xlsx')
+        self.data_dir=miao_dir
         self.load_genomic_data()
         self.load_clinical_data()
         self.add_all_big_bets_categories(ClinicalDataSet.bigbet_scores_df)
 
-    def load_clinical_data(self):
-        # self.clinical_data['cohort']
-        pass
-
     def load_genomic_data(self):
-        pass
+        miao_data_file = os.path.join(self.data_dir, '41588_2018_200_MOESM6_ESM.txt')
+        quality_file = os.path.join(self.data_dir, '41588_2018_200_MOESM3_ESM.csv')
+        self.seq_qual_df = pd.read_csv(quality_file, skiprows=28)
+        self.seq_qual_df.index = self.seq_qual_df['individual_id']
+        self.all_mutations = pd.read_table(miao_data_file)
+
+        orig_names = self.all_mutations['Hugo_Symbol'].unique()
+        new_names = match_names_to_symbols(orig_names)
+        gene_name_map = dict(zip(orig_names, new_names))
+        self.all_mutations['Hugo_Symbol'] = self.all_mutations['Hugo_Symbol'].apply(
+            lambda x: gene_name_map.get(x, x))
+
+        # we have to compute TMB values before filtering mutations
+        self.total_muts = self.all_mutations['pair_id'].value_counts()
+        self.all_mutations['Variant_Classification'] = self.all_mutations['Variant_Classification'].apply(
+            lambda x: str(x).lower())
+        # logger.info(self.all_mutations['Variant_Classification'].value_counts().index)
+        # all_mutations=all_mutations.iloc[np.where(all_mutations['Variant_Classification'].isin(consequence_to_keep))[0],:]
+
+        self.spec_by_genes = (self.all_mutations.groupby(['pair_id', 'Hugo_Symbol']).size().unstack(fill_value=0) > 0).astype(int)
+
+
+    def load_clinical_data(self):
+        self.clinical_data_file = os.path.join(miao_dir, '41588_2018_200_MOESM4_ESM.csv')
+        self.clinical_data = pd.read_csv(self.clinical_data_file)
+        self.clinical_data.index = self.clinical_data['pair_id']
+
+        def find_substr(val, a):
+            val = np.where(list(map(lambda x: re.search(val, x), a)))[0]
+            if len(val) > 0:
+                return val[0]
+            else:
+                return -1
+
+        pair_ids = self.all_mutations['pair_id'].unique()
+
+        matches = self.seq_qual_df['individual_id'].apply(lambda x: find_substr(x, pair_ids))
+        ids2keep = self.seq_qual_df['individual_id'][matches != -1]
+        matches = matches[matches != -1]
+        idmap = dict((cid, pair_ids[matches.iloc[i]]) for i, cid in enumerate(ids2keep))
+        revidmap = dict((v, k) for k, v in idmap.items())
+
+        self.clinical_data['total_cnts'] = self.total_muts[self.clinical_data.index]
+        self.clinical_data['individual_id'] = self.clinical_data['pair_id'].apply(lambda x: revidmap.get(x, 'None'))
+        self.clinical_data['bases_covered'] = self.seq_qual_df['somatic_mutation_covered_bases_capture'].reindex(
+            self.clinical_data['individual_id']).values
+        self.clinical_data['TMB'] = self.clinical_data['total_cnts'] / (self.clinical_data['bases_covered'] / 1000000)
+
+        # one sample was missing total bases covered so we just imput this
+        temp = self.clinical_data.loc[:, ['total_cnts', 'TMB']].dropna(axis=0, how='any')
+        slope, inter, rval, pval, stderr = stats.linregress(temp)
+        # getting missing indices and use mx+b to "predict" tmb
+        missing_inds = np.where(self.clinical_data['TMB'].isna())[0]
+        self.clinical_data.iloc[missing_inds, self.clinical_data.columns.get_loc('TMB')] = self.clinical_data['total_cnts'].iloc[
+            missing_inds].apply(lambda x: slope * x + inter)
+
+        # def get_TMB_status(x):
+        #     if x[1]>=cancer_specific_TMB_cuts[x[0]]:
+        #         return "TMB-H"
+        #     else:
+        #         return "TMB-L"
+        # cancer_specific_TMB_cuts=self.clinical_data.groupby('cancer_type')['TMB'].apply(lambda x: np.quantile(x,.75)).to_dict()
+        # self.clinical_data['high_TMB']=self.clinical_data.loc[:,['cancer_type',"TMB"]].apply(get_TMB_status,axis=1)
+
+        self.clinical_data['high_TMB'] = self.clinical_data['TMB'].apply(lambda x: 'TMB-H' if x > 10 else 'TMB-L')
+
+        # THERE ARE entried labled NE???  What to do with these?
+        self.clinical_data['binaryResponse'] = self.clinical_data['RECIST'].apply(
+            lambda x: 'CR/PR' if x in ['CR', 'PR'] else 'SD/PD')
+        self.clinical_data['os'] = self.clinical_data['os_days'] / 30.
+        self.clinical_data['censOS'] = self.clinical_data['os_censor']

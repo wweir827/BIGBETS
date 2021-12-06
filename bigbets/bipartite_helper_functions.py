@@ -213,9 +213,21 @@ def get_percents_bar_by_group(df,groups,var):
     return outdf
 
 def cal_mwu_pval(genes,df,snv_indel_df,outgroup,att='tmb'):
-    cinds=list(set(np.where(df.loc[:,genes]>0)[0]))
+    cinds=list(set(np.where(df.loc[:,df.columns.intersection(genes)]>0)[0]))
     cspecs=df.index[cinds]
     ctmbs=snv_indel_df.loc[cspecs,att]
     altertmbs=snv_indel_df.loc[outgroup,att]
     mwu,pval=stats.mannwhitneyu(x=ctmbs,y=altertmbs,alternative='greater')
     return  mwu,pval
+
+def get_tmb_values_genes(genes,df,snv_indel_df,att='tmb'):
+    "return the TMB values for a group of genes given mutations df and tmb df"
+    cinds=list(set(np.where(df.loc[:,df.columns.intersection(genes)]>0)[0]))
+    cspecs=df.index[cinds]
+    ctmbs=snv_indel_df.loc[cspecs,att]
+    return ctmbs
+
+def get_gene_signature(df,sig_genes):
+    sig_means=np.mean(df.loc[:,sig_genes],axis=1)
+    sig_means=(sig_means-np.median(sig_means))/np.std(sig_means)
+    return sig_means
