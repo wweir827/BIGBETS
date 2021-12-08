@@ -25,8 +25,11 @@ def load_GSEA_gene_signatures():
     return gene_sigs
 
 class ClinicalDataSet():
-    bigbet_scores_df = pd.read_csv(bigbet_scores_file,index_col=0)
-
+    if os.path.exists(bigbet_scores_file):
+        bigbet_scores_df = pd.read_csv(bigbet_scores_file,index_col=0)
+    else:
+        bigbet_scores_df=None
+        logger.info("BiG-BETS scores not detected.  Will not be able to annotate clinical datasets.")
     def __init__(self):
         pass
     
@@ -44,30 +47,38 @@ class ClinicalDataSet():
                 self.clinical_bigbets_df[label] == 'MUT').astype(int)
         return gene_mutated_samples
 
-    def add_all_big_bets_categories(self,bigbets_df):
+    def add_all_big_bets_categories(self,bigbets_df,drop_intersection=True):
         """
 
         :param bigbets_df: dataframe with BiG-BET scores.
         :return:
         """
+        if bigbets_df is None:
+            logger.info("Unable to annotate clinical dataset.")
+            return
 
         bigbets_df['path'] = list(map(lambda x: myddr_obj.gene_2_path_dict.get(x, ['None'])[0], bigbets_df.index))
 
         bigbets_filt_df = bigbets_df.iloc[np.where(bigbets_df.index.isin(self.spec_by_genes.columns))[0], :]
         
         ddr_bigbets_filt_df = bigbets_filt_df.iloc[np.where(~bigbets_filt_df['path'].isin(['None',np.nan]))  [0], :]
-        ddr_bigbets_filt_df.sort_values(by='zscore_tcga', inplace=True)
+        ddr_bigbets_filt_df.sort_values(by='bigbets', inplace=True)
         ddr_genes_present=ddr_bigbets_filt_df.index
         self.clinical_bigbets_df=self.clinical_data.copy()
         self.add_big_bets_category(ddr_genes_present,'DDR')
 
         cut = 0
-        high_ddr_genes = ddr_bigbets_filt_df.index[np.where(ddr_bigbets_filt_df['zscore_tcga'] > np.abs(cut))]
+        high_ddr_genes = ddr_bigbets_filt_df.index[np.where(ddr_bigbets_filt_df['bigbets'] > np.abs(cut))]
         ddr_high_gene_mutated=self.add_big_bets_category(high_ddr_genes,'DDR_high_z')
 
         #take into account intersection.
-        low_ddr_genes = ddr_bigbets_filt_df.index[np.where(ddr_bigbets_filt_df['zscore_tcga'] < cut)]
+        low_ddr_genes = ddr_bigbets_filt_df.index[np.where(ddr_bigbets_filt_df['bigbets'] < cut)]
         ddr_low_gene_mutated=self.add_big_bets_category(low_ddr_genes,'DDR_low_z')
+        if drop_intersection:
+            self.clinical_bigbets_df.loc[set(ddr_low_gene_mutated).intersection(ddr_high_gene_mutated),'DDR_low_z'] =  'WT'
+            self.clinical_bigbets_df['DDR_low_z_TMB'] = list(
+                map(lambda x: "_".join([str(val) for val in self.clinical_bigbets_df.loc[x, ['high_TMB', 'DDR_low_z']]]),self.clinical_bigbets_df.index))
+            self.clinical_bigbets_df['DDRlowz:highTMB'] = (self.clinical_bigbets_df['high_TMB'] == 'TMB-H') * (self.clinical_bigbets_df['DDR_low_z'] == 'MUT').astype(int)
 
 
         if "mwu_tcga" in ddr_bigbets_filt_df.columns:
@@ -81,14 +92,14 @@ class ClinicalDataSet():
             histone_genes = myddr_obj.path_2_genes_dict['histone_modification_pathway']
             histone_genes = histone_genes[np.isin(histone_genes, bigbets_filt_df.index)]
             hist_zscores = bigbets_filt_df.loc[histone_genes, :]
-            low_hist_genes = hist_zscores.index[np.where(hist_zscores['zscore_tcga'] < cut)]
+            low_hist_genes = hist_zscores.index[np.where(hist_zscores['bigbets'] < cut)]
             self.add_big_bets_category(low_hist_genes, 'hist_lowz')
 
         if 'chromatin_remodel' in myddr_obj.path_2_genes_dict.keys():
             chromatin_genes = myddr_obj.path_2_genes_dict['chromatin_remodel']
             chromatin_genes = chromatin_genes[np.isin(chromatin_genes, bigbets_filt_df.index)]
             chromatin_zscores = bigbets_filt_df.loc[chromatin_genes, :]
-            low_chromatin_genes = chromatin_zscores.index[np.where(chromatin_zscores['zscore_tcga'] < cut)]
+            low_chromatin_genes = chromatin_zscores.index[np.where(chromatin_zscores['bigbets'] < cut)]
             self.add_big_bets_category(low_chromatin_genes, 'chromatin_lowz')
 
 
@@ -551,7 +562,7 @@ class WeirMetaDataSet(ClinicalDataSet):
         self.spec_by_genes=pd.concat([self.cbioportal.spec_by_genes, self.rose.spec_by_genes], join='outer', sort=True)
         self.clinical_data = pd.concat([self.cbioportal.clinical_data, self.rose.clinical_data], join='inner', sort=True)
         #some redudancy here.
-        self.add_all_big_bets_categories(ClinicalDataSet.bigbet_scores_df)
+        self.add_all_big_bets_categories(ClinicalDataSet.bigbet_scores_df,drop_intersection=False)
 
 
 class Braun2020Dataset(ClinicalDataSet):

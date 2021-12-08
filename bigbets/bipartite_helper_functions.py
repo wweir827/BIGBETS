@@ -28,9 +28,7 @@ def get_excess_degree_sparse(csr_mat,samples,features):
     return outvals
 
 def get_ecdf_tmb_df(genes,df,snv_indel_df):
-    """Trimmed down method for use on low memory matrix (used
-    while running bipartite configuration sampling)"""
-    cinds = list(set(df.index[np.where(df.loc[:, genes] > 0)[0]]))
+    cinds = list(set(df.index[np.where(df.loc[:, df.columns.intersection(genes)] > 0)[0]]))
     tmbs = np.log1p(snv_indel_df.loc[cinds, 'tmb']).dropna()
     try:
         cdf = sm.distributions.ECDF(tmbs)
@@ -43,8 +41,9 @@ def get_ecdf_tmb_df(genes,df,snv_indel_df):
 
 
 def get_ecdf_tmb(genes, mat,samps,feats, snv_indel_df):
+    """Trimmed down method for use on low memory matrix (used
+        while running bipartite configuration sampling)"""
     c_cols=np.where(np.isin(feats,genes))[0] #columns to keep from matrix
-
     # cinds = list(set(samps[np.where((mat[:, c_cols] > 0).data)[0]]))
     cinds=samps[list(set(mat[:,c_cols].nonzero()[0]))]
     # tmbs = np.log1p(snv_indel_df.loc[cinds, 'tmb']).dropna()
@@ -108,6 +107,8 @@ def get_tmb_dist_paths(mat,samps,feats, snv_indels_df, path2genedict):
     for path, genes in path2genedict.items():
         if path in path2rm:
             continue
+        if not np.any(np.isin(genes,feats)):
+            continue #
         path2tmb[path] = {}
         x, cdf = get_ecdf_tmb(genes=genes,mat=mat,samps=samps,feats=feats,
                               snv_indel_df=snv_indels_df)

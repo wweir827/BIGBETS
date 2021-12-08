@@ -140,7 +140,7 @@ class ConfigurationRewiring(object):
         :param num_samples:
         :param rewirespersample:
         :param num_fails_allowed:
-        :param single_edges:
+        :param single_edges: enforce no double edges (i.e. swap must preserve unique edges)
         :return:
         """
         collected_data={}
@@ -219,6 +219,7 @@ class BipartiteMatching(ConfigurationRewiring):
         """
 
         if self.sample_classes is not None:
+            "randomly choose class, then select possible samples"
             class2switch = np.random.choice(self.sample_classes, replace=True, size=1)[0]
 
             poss_inds = np.where(self.sample_classes == class2switch)[0]
@@ -228,10 +229,6 @@ class BipartiteMatching(ConfigurationRewiring):
             samp1, samp2 = np.random.choice(poss_inds, replace=False, size=2)
         else:
             samp1, samp2 = np.random.choice(np.arange(len(self.samples)), replace=False, size=2)
-
-        s1inds = cur_array[samp1, :].nonzero()[1]
-        s2inds = cur_array[samp2, :].nonzero()[1]
-
 
         s1inds=cur_array[samp1,:].nonzero()[1]
         s2inds=cur_array[samp2,:].nonzero()[1]

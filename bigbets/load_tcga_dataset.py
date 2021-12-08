@@ -39,11 +39,13 @@ class TCGA_Data(ClinicalDataSet):
         self.alteration_data_tcga = pd.read_table(os.path.join(self.data_dir, "mc3.v0.2.8.PUBLIC.maf"), usecols=cols2keep)
 
         #make sure names are HUGO symbols
-        mygenes_df_file=os.path.join(self.data_dir, 'tcga_all_mg_query_df.pickle')
+        mygenes_df_file=os.path.join(self.data_dir, 'tcga_all_mg_query_df.csv')
         if not os.path.exists(mygenes_df_file):
             self.create_tcga_gene_names_map()
-        with gzip.open(mygenes_df_file, 'rb') as fh:
-            my_genes_df=pickle.load(fh)
+
+        my_genes_df=pd.read_csv(mygenes_df_file,index_col=0)
+            # with gzip.open(mygenes_df_file, 'rb') as fh:
+            #     my_genes_df=pickle.load(fh)
 
 
         #map over the symobols based on presearched names in the gene map dataset.
@@ -171,10 +173,10 @@ class TCGA_Data(ClinicalDataSet):
         my_res_df = my_res_df.loc[my_res_df.groupby('query')['_score'].idxmax().dropna(), :]
         my_res_df.index = my_res_df['query']
 
-        # map gene names to symbols found
-        tcga_dir = "/Users/whweir/Documents/UNC_SOM_docs/Mucha_Lab/Mucha_Python/TCGA/PMEC/pan_can_maf/"
-        with gzip.open(os.path.join(tcga_dir, 'tcga_all_mg_query_df.pickle'), 'wb') as fh:
-            pickle.dump(my_res_df, fh)
+        # # map gene names to symbols found
+        # with gzip.open(os.path.join(self.data_dir, 'tcga_all_mg_query_df.pickle'), 'wb') as fh:
+        #     pickle.dump(my_res_df, fh)
+        my_res_df.to_csv(os.path.join(self.data_dir,'tcga_all_mg_query_df.csv'))
 
     def load_tcga_deletions(self,read=True):
         tcga_del_file=os.path.join(self.data_dir, 'tcga_cn_ddr_genes_only.csv')
