@@ -131,6 +131,9 @@ class ConfigurationRewiring(object):
                 rewire_succeed+=1
             if status==-1:
                 rewire_fail+=1
+
+        if rewire_succeed<num_rewires:
+            logging.info("Falled to achieve targed rewires: success {:d} failed: {:d}.".format(rewire_succeed, rewire_fail))
         logging.debug("success {:d} failed: {:d} time: {:.3f}.".format(rewire_succeed,rewire_fail,time()-t0))
         return next_array,rewire_succeed
 
@@ -154,12 +157,12 @@ class ConfigurationRewiring(object):
                                  num_rewires=burninwires,
                                  num_fails_allowed=num_fails_allowed,single_edges=single_edges)
             cur_rewires+=num_rewires
-        logging.debug("Finished burn in")
-        logging.debug("Collecting samples at {:d} rewire".format(rewirespersample))
+        logging.info("Finished burn in")
+        logging.info("Collecting samples at {:d} rewire".format(rewirespersample))
         t0=time()
         for i in range(num_samples):
             if i%5==0:
-                logging.debug("Collected {:d} samples successfully in {:.3f}".format(i,time()-t0))
+                logging.info("Collected {:d} samples successfully in {:.3f}".format(i,time()-t0))
             cur_array,num_rewires=self.perform_rewires(cur_array=cur_array,
                                  num_rewires=rewirespersample,
                                  num_fails_allowed=num_fails_allowed,single_edges=single_edges)

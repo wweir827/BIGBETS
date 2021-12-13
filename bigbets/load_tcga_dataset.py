@@ -320,3 +320,20 @@ class TCGA_Data(ClinicalDataSet):
         for sig, genes in gene_sigs.items():
             cgenes = np.array(genes)[np.where(np.isin(genes, self.log_all_rna_exp_scaled.columns))[0]]
             self.ig_signatures.loc[:, sig] = get_gene_signature(self.log_all_rna_exp_scaled, cgenes)
+
+    def get_cancer_types_filtered(self,types2keep=None):
+        """
+        We use this to match the tcga data with cancer type represented in samstein ( which are
+        the default types to filter to
+        :param types2keep: which TCGA cancer types to keep
+        :return:
+        """
+        if not hasattr(self, 'clincial_data'):
+            self.load_clinical_data()
+        if types2keep is None:
+            types2keep=['LUAD','LUSC','BRCA','LGG',"SKCM",'COAD','ESCA','KIRC','BLCA','HNSC']
+        self.typesfiltered=types2keep
+        samps2keep = self.clinical_bigbets_df.index[self.clinical_bigbets_df['type'].isin(types2keep)]
+
+        self.spec_by_genes_type_filt=self.tcga_spec_by_all_genes.loc[samps2keep,:]
+        self.spec_by_genes_type_filt=self.spec_by_genes_type_filt.loc[:,np.sum(self.spec_by_genes_type_filt,axis=0)>0] #only keep genes with at least one mutation
