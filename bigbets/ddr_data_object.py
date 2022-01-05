@@ -107,25 +107,16 @@ class DDR_Data_object(object,metaclass=Singleton):
 
         from goatools.go_search import GoSearch
         srchhelp = GoSearch("go-basic.obo", go2items=go2geneids_human)
-        # Get other pathways for
-        # Compile search pattern for 'cell cycle'
-        cell_cycle_all = re.compile(r'chromatin remodeling', flags=re.IGNORECASE)
 
-        # Find ALL GOs and GeneIDs associated with 'cell cycle'.
 
-        # Details of search are written to a log file
-        fout_allgos = "cell_cycle_gos_human.log"
-        with open(fout_allgos, "w") as log:
-            # Search for 'cell cycle' in GO terms
-            gos_cc_all = srchhelp.get_matching_gos(cell_cycle_all, prt=log)
-            # Find any GOs matching 'cell cycle-independent' (e.g., "lysosome")
-            #     gos_no_cc = srchhelp.get_matching_gos(cell_cycle_not, gos=gos_cc_all, prt=log)
-            #     # Remove GO terms that are not "cell cycle" GOs
-            #     gos = gos_cc_all.difference(gos_no_cc)
-            # Add children GOs of cell cycle GOs
-            gos_all = srchhelp.add_children_gos(gos_cc_all)
-            # Get Entrez GeneIDs for cell cycle GOs
-            geneids = srchhelp.get_items(gos_all)
+
+        chromat_remod_parent=['GO:0006338']
+        #Just looked up the id for chromatin remodeling rather than search
+        # chromat_remod_search = re.compile(r'chromatin remodeling', flags=re.IGNORECASE)
+        # chromat_remod_parent = srchhelp.get_matching_gos(chromat_remod_search)
+        gos_all = srchhelp.add_children_gos(chromat_remod_parent)
+        # Get Entrez GeneIDs for cell cycle GOs
+        geneids = srchhelp.get_items(gos_all)
 
 
         mg = mygene.MyGeneInfo()

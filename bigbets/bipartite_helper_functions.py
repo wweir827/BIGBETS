@@ -151,18 +151,18 @@ def compile_all_runs_both_genes_paths(all_runs_data):
     return gene2_allecdf, paths2_allecdf
 
 
-def get_os_stats(clust, samp_df):
-    df2test = samp_df.loc[:, ['os', 'censOS']]
+def get_os_stats(clust, samp_df,os='os',censOS='censOS'):
+    df2test = samp_df.loc[:, [os, censOS]]
     df2test['clust'] = clust
     df2test = pd.get_dummies(df2test, columns=['clust'])
     df2test = df2test.iloc[:, :-1]
     cph = lifelines.CoxPHFitter()
-    cph.fit(df2test, 'os', event_col='censOS')
+    cph.fit(df2test, os, event_col=censOS)
     llrstat = cph.log_likelihood_ratio_test()
     pval = llrstat.p_value
 
-    res = lifelines.statistics.multivariate_logrank_test(df2test['os'],
-                                                         df2test['censOS'],
+    res = lifelines.statistics.multivariate_logrank_test(df2test[os],
+                                                         df2test[censOS],
                                                          clust)
 
     logrank = res.test_statistic

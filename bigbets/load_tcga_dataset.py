@@ -232,7 +232,7 @@ class TCGA_Data(ClinicalDataSet):
         self.del_samp_by_gene_tcga[self.del_samp_by_gene_tcga >= -1] = 0
         self.del_samp_by_gene_tcga[self.del_samp_by_gene_tcga < -1] = 1
 
-    def load_clinical_data(self):
+    def load_clinical_data(self,tmbthresh=10):
         logger.info("Loading TCGA Clinical data")
 
         self.tcga_survive_file = os.path.join(self.data_dir, 'TCGA-CDR-SupplementalTableS1.xlsx')
@@ -264,17 +264,20 @@ class TCGA_Data(ClinicalDataSet):
                         self.clinical_data.loc[val, 'censOS_5yr'] = 0
 
                 else:
+                    self.clinical_data.loc[val,'type']= 'None'
+                    self.clinical_data.loc[val,'race']= 'None'
                     self.clinical_data.loc[val, 'censOS'] = np.NaN
                     self.clinical_data.loc[val, 'os'] = np.NaN
                     self.clinical_data.loc[val, 'censOS_d'] = np.NaN
                     self.clinical_data.loc[val, 'os_d'] = np.NaN
 
         self.clinical_data['TMB'] = self.tcga_snv_indel_df.loc[self.clinical_data.index, 'tmb']
-        self.clinical_data['high_TMB'] = self.clinical_data['TMB'].apply(lambda x: "TMB-H" if x > 15 else "TMB-L")
-
+        self.clinical_data['high_TMB'] = self.clinical_data['TMB'].apply(lambda x: "TMB-H" if x > tmbthresh else "TMB-L")
+        #drop nans
         #for marking clincial data wth inherited method
         self.spec_by_genes=self.tcga_spec_by_all_genes
-        self.add_all_big_bets_categories(ClinicalDataSet.bigbet_scores_df)
+        self.add_all_big_bets_categories(ClinicalDataSet.bigbet_scores_df,
+                                         drop_intersection=False)
 
     def load_rnaseq_data(self):
         logger.info("Loading TCGA RNAseq data")
@@ -291,7 +294,7 @@ class TCGA_Data(ClinicalDataSet):
             convtable=res['out']
             convtable.to_csv(entrez2symbolsfile)
 
-        symbols = np.array(list(map(lambda x: convtable['symbol'].get(x, 'Not_found'), gene_entrez)))
+        symbols = np.array(list(map(lambda x: convtable['symbol'].get(int(x), 'Not_found'), gene_entrez.values)))
         self.rnaseq_df['gene_id'] = symbols
 
         self.rnaseq_df = self.rnaseq_df.set_index('gene_id')
@@ -314,12 +317,22 @@ class TCGA_Data(ClinicalDataSet):
         #construct GSEA signatures as well.
         self.get_GSEA_signatures()
 
-    def get_GSEA_signatures(self):
+    def get_GSEA_signatures(self,use_filtered=False):
         gene_sigs=load_GSEA_gene_signatures()
-        self.ig_signatures = pd.DataFrame(index=self.log_all_rna_exp_scaled.index)
+        df2use = self.log_all_rna_exp_scaled if not use_filtered else self.log_all_rna_exp_scaled_type_filt
+        if not use_filtered:
+            self.ig_signatures = pd.DataFrame(index=df2use.index)
+        else:
+            self.ig_signatures_type_filt = pd.DataFrame(index=df2use.index)
+
         for sig, genes in gene_sigs.items():
-            cgenes = np.array(genes)[np.where(np.isin(genes, self.log_all_rna_exp_scaled.columns))[0]]
-            self.ig_signatures.loc[:, sig] = get_gene_signature(self.log_all_rna_exp_scaled, cgenes)
+            cgenes = np.array(genes)[np.where(np.isin(genes, df2use.columns))[0]]
+            if not use_filtered:
+                self.ig_signatures.loc[:, sig] = get_gene_signature(df2use, cgenes)
+            else:
+                self.ig_signatures_type_filt.loc[:, sig] = get_gene_signature(df2use, cgenes)
+
+
 
     def get_cancer_types_filtered(self,types2keep=None):
         """
@@ -328,12 +341,17 @@ class TCGA_Data(ClinicalDataSet):
         :param types2keep: which TCGA cancer types to keep
         :return:
         """
-        if not hasattr(self, 'clincial_data'):
+        if not hasattr(self, 'clinical_data'):
             self.load_clinical_data()
         if types2keep is None:
-            types2keep=['LUAD','LUSC','BRCA','LGG',"SKCM",'COAD','ESCA','KIRC','BLCA','HNSC']
+            types2keep=['LUAD','LUSC','BRCA',"SKCM",'COAD','ESCA','KIRC',
+                        'BLCA','HNSC']
         self.typesfiltered=types2keep
         samps2keep = self.clinical_bigbets_df.index[self.clinical_bigbets_df['type'].isin(types2keep)]
-
+        self.clinical_bigbets_data_type_filt=self.clinical_bigbets_df.loc[samps2keep,:]
         self.spec_by_genes_type_filt=self.tcga_spec_by_all_genes.loc[samps2keep,:]
         self.spec_by_genes_type_filt=self.spec_by_genes_type_filt.loc[:,np.sum(self.spec_by_genes_type_filt,axis=0)>0] #only keep genes with at least one mutation
+
+        if hasattr(self,'log_all_rna_exp_scaled'):
+            self.log_all_rna_exp_scaled_type_filt=self.log_all_rna_exp_scaled.loc[self.log_all_rna_exp_scaled.index.intersection(samps2keep),:]
+            self.get_GSEA_signatures(use_filtered=True)

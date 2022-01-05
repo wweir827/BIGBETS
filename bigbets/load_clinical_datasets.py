@@ -26,7 +26,9 @@ def load_GSEA_gene_signatures():
 
 class ClinicalDataSet():
     if os.path.exists(bigbet_scores_file):
-        bigbet_scores_df = pd.read_csv(bigbet_scores_file,index_col=0)
+        # bigbet_scores_df = pd.read_csv(bigbet_scores_file,index_col=0)
+        bigbet_scores_df = pd.read_csv(bigbet_moderate_included_scores_file,index_col=0)
+
     else:
         bigbet_scores_df=None
         logger.info("BiG-BETS scores not detected.  Will not be able to annotate clinical datasets.")
@@ -39,7 +41,7 @@ class ClinicalDataSet():
             np.where(np.sum(self.spec_by_genes.loc[:, genes], axis=1) > 0)[0]]
         # print('gene_mutated_samples, genes, samples', len(genes), len(gene_mutated_samples))
         self.clinical_bigbets_df[label] = 'WT'
-        self.clinical_bigbets_df.loc[gene_mutated_samples, label] = 'MUT'
+        self.clinical_bigbets_df.loc[self.clinical_bigbets_df.index.intersection(gene_mutated_samples), label] = 'MUT'
         self.clinical_bigbets_df['{:}_TMB'.format(label)] = list(
             map(lambda x: "_".join([str(val) for val in self.clinical_bigbets_df.loc[x, ['high_TMB', label]]]),
                 self.clinical_bigbets_df.index))
@@ -299,9 +301,6 @@ class IMVigorData(ClinicalDataSet):
         gene2remove = genecounts.index[genecounts < num_samps_required]
         gene2remove2 = genetotcounts.index[genetotcounts < tot_count_required]
 
-        # print("genes2remove", len(gene2remove))
-        # print("genes2remove", len(gene2remove2))
-        # print('total removed', len(set(gene2remove).union(gene2remove2)))
 
         gene2remove = np.array(list(set(gene2remove).union(gene2remove2)))
 
@@ -580,7 +579,7 @@ class Braun2020Dataset(ClinicalDataSet):
         self.clinical_data = pd.read_excel(self.datafile, sheet_name="S1_Clinical_and_Immune_Data", skiprows=[0])
         self.clinical_data = self.clinical_data.dropna(subset=['MAF_Tumor_ID'])
         self.clinical_data['TMB'] = self.clinical_data['TMB_Counts']
-        thresh=np.quantile(self.clinical_data["TMB"],.75)
+        thresh=100
         self.clinical_data['high_TMB'] = self.clinical_data['TMB'].apply(lambda x: 'TMB-H' if x > thresh else 'TMB-L')
         # THE TYPES are CB ICB NCB.  Not sure how to group these. 
         self.clinical_data['binaryResponse'] = self.clinical_data['ORR'].apply(
